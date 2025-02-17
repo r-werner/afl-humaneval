@@ -27,8 +27,19 @@
 */
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import dotenv from "dotenv";
-import fs from "fs";
+import fs, { promises } from "fs";
 import * as ts from "typescript";
+import { AssertionError } from "assert";
+
+type TestCaseRow = {
+  task_id: string;
+  prompt: string;
+  test: string;
+  language: string;
+  description: string;
+  entry_point: string;
+  natural_language: string;
+};
 
 dotenv.config();
 
@@ -39,42 +50,10 @@ console.log(
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY!);
 const modelGemini = genAI.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
 
-// load the HumanEval dataset
-const dataset = loadDataset();
-executeTasks(dataset);
 
-type TestCaseRow = {
-  task_id: string;
-  prompt: string;
-  test: string;
-  language: string;
-  description: string;
-  entry_point: string;
-  natural_language: string;
-}
-
-// function to iterate over the dataset and generate test cases
-async function executeTasks(dataset: any[]) {
+function createTestFilesForHumanEval(dataset: TestCaseRow[]) {
   for (const row of dataset) {
-    printTaskDetails(row);
-    // call the Gemini API to generate a test case
-    const promise = generateCodeFromPrompt(row.prompt);
-    const task_response = await promise;
-
-    // extract the program code from the markdown
-    const task_program_code = extractProgramCodeFromMarkdown(task_response);
-
-    if (task_program_code !== null) {
-      // write the task program code to a file
-      writeProgramCodeToFile(row.task_id, task_program_code);
-      // write the test code to a file
-      writeTestCodeToFile(row.task_id, row.test);
-      // execute the program code
-      //const result = executeProgram(task_program_code);
-      //console.log(result);
-    } else {
-      console.error("No code extracted from the markdown.");
-    }
+    writeTestCodeToFile(row.task_id, row.test);
   }
 }
 
@@ -96,12 +75,6 @@ function writeTestCodeToFile(task_id: string, test_code: string) {
   fs.writeFileSync(`temp/task_${task_id_sanitized}_test.ts`, test_code);
 }
 
-function executeProgram(code: string) {
-  // execute the program code
-  const result = executeTypescriptString(code);
-  return result;
-}
-
 function loadDataset(): TestCaseRow[] {
   // load the HumanEval dataset
   const dataset = fs.readFileSync("data/typescript/English.jsonl", "utf8");
@@ -117,25 +90,17 @@ function loadDataset(): TestCaseRow[] {
 
 /**
  * Generates code from a prompt using the Gemini API.
- * 
+ *
  * @param row The task row from the dataset.
  * @returns The generated code as a string.
  */
-async function generateCodeFromPrompt(prompt: string): Promise<string> {
-  const startTime = Date.now();
-  const interval = setInterval(() => {
-    const elapsed = Math.floor((Date.now() - startTime) / 1000);
-    process.stdout.write(`\rElapsed time: ${elapsed}s`);
-  }, 1000);
+async function generateCodeFromPromptWithAI(prompt: string): Promise<string> {
 
   const promise = modelGemini.generateContent(prompt);
   const response = await promise;
 
-  clearInterval(interval);
-  process.stdout.write("\n");
-
   const responseText = response.response.text();
-  console.log(responseText);
+  // console.log(responseText);
 
   return responseText;
 }
@@ -178,13 +143,13 @@ function extractProgramCodeFromMarkdown(markdownString: string): string | null {
 
   // Remove any leading/trailing newlines within the code block itself for cleaner output
   extractedCode = extractedCode.replace(/^\n+|\n+$/g, "");
-  console.log(extractedCode);
+  //console.log(extractedCode);
   return extractedCode;
 }
 
 /**
  * Prints the details of a task to the console.
- * 
+ *
  * @param row The task row from the dataset.
  */
 function printTaskDetails(row: TestCaseRow): void {
@@ -212,14 +177,14 @@ function printTaskDetails(row: TestCaseRow): void {
  * @returns The result of executing the code, or undefined if there's an error.
  *          Returns `null` if compilation fails.
  */
-function executeTypescriptString(typescriptCode: string): any | null {
+function executeTypescriptString(typescriptCode: string): boolean {
   try {
     // 1. Compile TypeScript to JavaScript using the TypeScript compiler API
     const transpiledOutput = ts.transpileModule(typescriptCode, {
       compilerOptions: {
-        module: ts.ModuleKind.CommonJS, // Or ESNext, depending on your environment
-        target: ts.ScriptTarget.ESNext, // Or your target ES version
-        // You can add more compiler options as needed (e.g., jsx, strict, etc.)
+        module: ts.ModuleKind.CommonJS,
+        target: ts.ScriptTarget.ESNext,
+        noImplicitUseStrict: true,
       },
     });
 
@@ -245,19 +210,185 @@ function executeTypescriptString(typescriptCode: string): any | null {
           );
         }
       });
-      return null; // Compilation failed due to errors
+      return false; // Compilation failed due to errors
     }
 
     const javascriptCode = transpiledOutput.outputText;
+    // console.log(javascriptCode);
 
-    // 2. Execute the JavaScript code using the Function constructor
-    // WARNING: Using Function is similar to eval() and has security risks.
-    //          Only use this if you absolutely trust the source of the typescriptCode.
-    const executableFunction = new Function(javascriptCode); // Creates a function from the JS code string
-    const result = executableFunction(); // Execute the dynamically created function
-    return result;
+    // put the code in a function and execute it
+    const executableFunction = new Function(
+      "exports",
+      "require",
+      "module",
+      javascriptCode
+    );
+    const moduleObj = { exports: {} };
+    executableFunction(moduleObj.exports, require, moduleObj);
+    // if we got here, the code executed without errors
+    return true;
   } catch (error) {
-    console.error("Error executing TypeScript string:", error);
-    return undefined; // Execution error
+    if (error instanceof AssertionError) {
+      // if the error is an AssertionError, we need to return false
+      // because the code is not correct
+      // the test code asserts threw an error
+      console.error("AssertionError caught:", error);
+    } else {
+      console.error("Error executing TypeScript string:", error);
+    }
+    return false; // Execution error
   }
 }
+
+/**
+ * Executes all the program code files in the "temp" directory and logs results.
+ */
+function executeAllProgramCodes(): void {
+  console.log("Executing all program codes...");
+
+  // Ensure the temp directory exists
+  if (!fs.existsSync("temp")) {
+    console.error("Temp directory does not exist.");
+    return;
+  }
+
+  const files = fs.readdirSync("temp");
+
+  // Filter for program code files
+  const codeFiles = files.filter((file) => file.endsWith("_code.ts"));
+
+  codeFiles.forEach((file) => {
+    const codePath = `temp/${file}`;
+    const code = fs.readFileSync(codePath, "utf8");
+
+    // Determine corresponding test file name
+    const testFile = file.replace("_code.ts", "_test.ts");
+    const testPath = `temp/${testFile}`;
+
+    if (!fs.existsSync(testPath)) {
+      console.error(
+        `Test file ${testFile} not found for program code file ${file}.`
+      );
+      return;
+    }
+
+    const testCode = fs.readFileSync(testPath, "utf8");
+
+    // prepend the test code to the program code
+    const combinedCode = `${code}\n\n${testCode}`;
+    // console.log(combinedCode);
+
+    // write the combined code to a file with the name of the program code file
+    // but with the extension .combined.ts
+    const combinedFilePath = codePath.replace("_code.ts", "_combined.ts");
+    fs.writeFileSync(combinedFilePath, combinedCode);
+
+    // Execute the program code
+    const result = executeTypescriptString(combinedCode);
+    console.log("================================================ ");
+    console.log(`Result for ${file}:`, result);
+    console.log("================================================");
+
+    // Optionally, you could evaluate the result against the testCode here.
+    // For example, you might run the testCode or perform assertions.
+  });
+}
+
+/**
+ * Rate-limited API caller.
+ */
+class RateLimitedApiCaller {
+  private rateLimit: number;
+  private timeWindowSeconds: number;
+  private callCount: number;
+  private lastResetTime: number;
+
+  /**
+   * Constructor for RateLimitedApiCaller.
+   * @param rateLimit - The maximum number of calls allowed within the time window.
+   * @param timeWindowSeconds - The time window in seconds for the rate limit.
+   */
+  constructor(rateLimit: number, timeWindowSeconds: number) {
+    this.rateLimit = rateLimit;
+    this.timeWindowSeconds = timeWindowSeconds;
+    this.callCount = 0;
+    this.lastResetTime = Date.now();
+  }
+
+  private async waitForRateLimit(): Promise<void> {
+    const currentTime = Date.now();
+    const timeElapsed = (currentTime - this.lastResetTime) / 1000; // in seconds
+
+    if (timeElapsed >= this.timeWindowSeconds) {
+      // Reset the counter if the time window has passed
+      this.callCount = 0;
+      this.lastResetTime = currentTime;
+      return; // no need to wait
+    }
+
+    if (this.callCount >= this.rateLimit) {
+      // Rate limit exceeded, calculate wait time
+      const remainingTime = this.timeWindowSeconds - timeElapsed;
+      console.log(
+        `Rate limit reached. Waiting for ${remainingTime.toFixed(2)} seconds...`
+      );
+      await this.delay(remainingTime * 1000);
+    }
+
+    this.callCount++;
+  }
+
+  private delay(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  /**
+   * executes a long running operation with rate limiting.
+   * @returns A Promise that resolves with the API response data or rejects with an error.
+   */
+  async callAIApiToGenerateCode(row: TestCaseRow): Promise<any> {
+    await this.waitForRateLimit();
+
+    console.log(
+      `>>>>>[Call ${row.task_id}] Starting API call... (Call count in window: ${this.callCount})`
+    );    
+    // printTaskDetails(row);
+    const response = await generateCodeFromPromptWithAI(row.prompt);
+    console.log(`<<<<<[Call ${row.task_id}] API call finished.`);
+
+    // extract the program code from the markdown
+    const task_program_code = extractProgramCodeFromMarkdown(response);
+
+    if (task_program_code !== null) {
+      // write the task program code to a file
+      writeProgramCodeToFile(row.task_id, task_program_code);
+      // execute the program code
+      //const result = executeProgram(task_program_code);
+      //console.log(result);
+    } else {
+      console.error("No code extracted from the markdown.");
+    }
+
+    return response;
+  }
+}
+
+async function mainModule() {
+  const apiCaller = new RateLimitedApiCaller(14, 65); // 15 calls per 60 seconds
+
+  // load the HumanEval dataset
+  const dataset = loadDataset();
+  // for the HumanEval dataset, create files that contain the test code
+  // and save them in the data/typescript/test directory
+  // createTestFilesForHumanEval(dataset);
+
+  // for each task, call the Gemini API to generate the code
+  // and save the response to a file
+  for (const row of dataset) {
+    console.log(`Preparing to make API call ${row.task_id}...`);
+    await apiCaller.callAIApiToGenerateCode(row);
+    console.log(`API call ${row.task_id} processed.`);
+  }
+}
+
+mainModule();
