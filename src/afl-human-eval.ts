@@ -48,8 +48,90 @@ console.log(
   `Initializing Gemini client... using API key: ${process.env.GOOGLE_API_KEY}`
 );
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY!);
-const modelGemini = genAI.getGenerativeModel({ model: "gemini-2.0-flash-exp" });
+const modelGemini = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
+// system prompt for the Gemini API to generate the code that is ES5 only 
+// and does not use any modern JavaScript features
+const systemPromptES5 = `
+  You are a JavaScript expert.
+  Write JavaScript code that is fully compliant with the ECMAScript 5 (ES5) standard. 
+  Do not use any of the following:
+  - Arrow functions (\`=>\`)
+  - \`let\` and \`const\` keywords (use \`var\` instead)
+  - Template literals (backticks \`\` \`\`)
+  - Classes
+  - Promises (\`Promise\`, \`.then\`, \`.catch\`)
+  - \`async\`/\`await\`
+  - Modules (\`import\`, \`export\`)
+  - Default parameters
+  - Rest/Spread operators (\`...\`)
+  - Destructuring assignments
+  - \`for...of\` loops
+  - New built-in methods like \`Array.prototype.includes\`, \`String.prototype.startsWith\`, etc.
+  - Symbol data type
+  - variable declarations inside blocks
+  - \`var\` declarations inside loop statements
+  - inner functions
+
+Here's an example of ES5-compliant code:
+function sumMatrix(matrix) {
+  var sum = 0;
+  var i;
+  var j;
+  for (i = 0; i < matrix.length; i++) { // Outer loop (rows)
+    for (j = 0; j < matrix[i].length; j++) { // Inner loop (columns)
+      sum += matrix[i][j];
+    }
+  }
+  return sum;
+}
+
+var myMatrix = [
+  [1, 2, 3],
+  [4, 5, 6]
+];
+
+var totalSum = sumMatrix(myMatrix);
+console.log(totalSum); // Output: 21 (1 + 2 + 3 + 4 + 5 + 6 = 21)
+`;
+
+const jshint_options = {
+  "es5": true,       // Use ECMAScript 5 (ES5) syntax
+  "undef": true,        // Report undefined variables
+//  "unused": true,       // Report unused variables
+  "latedef": true,  // Disallow use of variables before they are defined (except for function declarations)
+  "curly": true,        // Require curly braces around blocks (if, for, while, etc.)
+  "noempty": true,      // Prohibit empty blocks
+  "nonbsp": true,      // Prohibit non-breaking spaces
+  /*
+  "node": true,        // If using Node.js, enables Node.js globals (e.g., require, module)
+  "browser": true,     // If running in a browser, enables browser globals (e.g., window, document)
+  "bitwise": true,      // Prohibit bitwise operators (&, |, ^, etc.)
+  "eqeqeq": true,       // Require === and !== instead of == and !=
+  "forin": true,        // Require filtering with hasOwnProperty in for...in loops
+  "freeze": true,       // Prohibit overriding native object prototypes
+  "immed": true,       // Require immediate function invocations to be wrapped in parentheses
+  "newcap": true,      // Require constructor functions to be capitalized
+  "noarg": true,       // Prohibit use of arguments.caller and arguments.callee
+  "nonew": true,       // Prohibit use of new without assigning the result to a variable
+  "plusplus": true,    // Allow/Disallow ++ and -- (I prefer to allow them, so set to false)
+  "trailing": true,     // Prohibit trailing whitespace
+  */
+  "asi": false          // I like enforcing semicolons.  Set to true to allow missing semicolons (not recommended).  }); 
+};
+
+function loadDataset(datasetPath: string): TestCaseRow[] {
+  // load the HumanEval dataset
+  const dataset = fs.readFileSync(datasetPath, "utf8");
+
+  // filter out empty lines and parse the dataset
+  const datasetParsed = dataset
+    .split("\n")
+    .filter((row) => row.trim() !== "")
+    .map((row) => JSON.parse(row));
+
+  return datasetParsed;
+}
 
 function createTestFilesForHumanEval(dataset: TestCaseRow[]) {
   for (const row of dataset) {
@@ -63,7 +145,7 @@ function writeProgramCodeToFile(task_id: string, code: string) {
   // write the code to a file
   // make sure task_id does not contain any special characters
   const task_id_sanitized = task_id.replace(/[^a-zA-Z0-9]/g, "_");
-  fs.writeFileSync(`temp/task_${task_id_sanitized}_code.ts`, code);
+  fs.writeFileSync(`temp/task_${task_id_sanitized}_code.js`, code);
 }
 
 function writeTestCodeToFile(task_id: string, test_code: string) {
@@ -72,20 +154,7 @@ function writeTestCodeToFile(task_id: string, test_code: string) {
   // write the test code to a file
   // make sure task_id does not contain any special characters
   const task_id_sanitized = task_id.replace(/[^a-zA-Z0-9]/g, "_");
-  fs.writeFileSync(`temp/task_${task_id_sanitized}_test.ts`, test_code);
-}
-
-function loadDataset(): TestCaseRow[] {
-  // load the HumanEval dataset
-  const dataset = fs.readFileSync("data/typescript/English.jsonl", "utf8");
-
-  // filter out empty lines and parse the dataset
-  const datasetParsed = dataset
-    .split("\n")
-    .filter((row) => row.trim() !== "")
-    .map((row) => JSON.parse(row));
-
-  return datasetParsed;
+  fs.writeFileSync(`temp/task_${task_id_sanitized}_test.js`, test_code);
 }
 
 /**
@@ -94,9 +163,16 @@ function loadDataset(): TestCaseRow[] {
  * @param row The task row from the dataset.
  * @returns The generated code as a string.
  */
-async function generateCodeFromPromptWithAI(prompt: string): Promise<string> {
+async function generateCodeFromPromptWithAI(userPrompt: string): Promise<string> {
 
-  const promise = modelGemini.generateContent(prompt);
+  const parts = [
+    { text: systemPromptES5 }, // Prepend the instructions
+    { text: "\n\n" + userPrompt }, // Separate instructions from the user's question.  The newlines are CRITICAL.
+  ];
+
+  const promise = modelGemini.generateContent({
+    contents: [{ role: "user", parts }]
+  });
   const response = await promise;
 
   const responseText = response.response.text();
@@ -114,7 +190,7 @@ async function generateCodeFromPromptWithAI(prompt: string): Promise<string> {
  * @returns The extracted program code as a string, or null if not found.
  */
 function extractProgramCodeFromMarkdown(markdownString: string): string | null {
-  const startDelimiter = "```typescript"; // Look for TypeScript code block specifically
+  const startDelimiter = "```javascript"; // Look for TypeScript code block specifically
   const genericStartDelimiter = "```"; // Or generic code block (can assume TypeScript)
   const endDelimiter = "```";
 
@@ -241,6 +317,23 @@ function executeTypescriptString(typescriptCode: string): boolean {
 }
 
 /**
+ * Executes a JavaScript string.
+ *
+ * @param javascriptCode The JavaScript code as a string to execute.
+ * @returns The result of executing the code, or undefined if there's an error.
+ */
+function executeJavaScriptString(javascriptCode: string): boolean {
+  try {
+    // Execute the JavaScript code
+    const result = eval(javascriptCode);
+    return true;
+  } catch (error) { 
+    console.error("Error executing JavaScript string:", error);
+    return false;
+  }
+}
+
+/**
  * Executes all the program code files in the "temp" directory and logs results.
  */
 function executeAllProgramCodes(): void {
@@ -255,14 +348,14 @@ function executeAllProgramCodes(): void {
   const files = fs.readdirSync("temp");
 
   // Filter for program code files
-  const codeFiles = files.filter((file) => file.endsWith("_code.ts"));
+  const codeFiles = files.filter((file) => file.endsWith("_code.js"));
 
   codeFiles.forEach((file) => {
     const codePath = `temp/${file}`;
     const code = fs.readFileSync(codePath, "utf8");
 
     // Determine corresponding test file name
-    const testFile = file.replace("_code.ts", "_test.ts");
+    const testFile = file.replace("_code.js", "_test.js");
     const testPath = `temp/${testFile}`;
 
     if (!fs.existsSync(testPath)) {
@@ -280,11 +373,12 @@ function executeAllProgramCodes(): void {
 
     // write the combined code to a file with the name of the program code file
     // but with the extension .combined.ts
-    const combinedFilePath = codePath.replace("_code.ts", "_combined.ts");
+    const combinedFilePath = codePath.replace("_code.js", "_combined.js");
     fs.writeFileSync(combinedFilePath, combinedCode);
 
     // Execute the program code
-    const result = executeTypescriptString(combinedCode);
+    const result = executeJavaScriptString(combinedCode);
+    // const result = executeTypescriptString(combinedCode);
     console.log("================================================ ");
     console.log(`Result for ${file}:`, result);
     console.log("================================================");
@@ -297,7 +391,7 @@ function executeAllProgramCodes(): void {
 /**
  * Rate-limited API caller.
  */
-class RateLimitedApiCaller {
+class RateLimitedCaller {
   private rateLimit: number;
   private timeWindowSeconds: number;
   private callCount: number;
@@ -359,36 +453,97 @@ class RateLimitedApiCaller {
     // extract the program code from the markdown
     const task_program_code = extractProgramCodeFromMarkdown(response);
 
-    if (task_program_code !== null) {
-      // write the task program code to a file
-      writeProgramCodeToFile(row.task_id, task_program_code);
-      // execute the program code
-      //const result = executeProgram(task_program_code);
-      //console.log(result);
-    } else {
-      console.error("No code extracted from the markdown.");
+    // log an error if the program code is null
+    if (task_program_code === null) {
+      console.error(`No code extracted from the markdown for task ${row.task_id}.`);
+      return null;
     }
+
+    // write the task program code to a file
+    writeProgramCodeToFile(row.task_id, task_program_code);
+
+    // validate the program code to be ES5 compliant
+    const validationResult = validateES5Compliance(task_program_code);  
+    // log an error if the program code is not ES5 compliant
+    // write the errors to a file that is named after the task id
+    if (!validationResult.isValid) {
+      console.error(`Code validation failed for task ${row.task_id}:`);
+      if (validationResult.errors) {
+        validationResult.errors.forEach(error => {
+          console.error(`  Line ${error.line}, Column ${error.character}: ${error.reason}, ${error.raw}, ${error.code}, ${error.scope}`);
+        });
+        // write the errors to a file that is named after the task id
+        // write one error per line in the format:
+        // Line <line>, Column <column>: <message>
+        // make sure task_id does not contain any special characters
+        const task_id_sanitized = row.task_id.replace(/[^a-zA-Z0-9]/g, "_");
+        fs.writeFileSync(`temp/task_${task_id_sanitized}_errors.txt`, validationResult.errors.map(error => `Line ${error.line}, Column ${error.character}: ${error.reason}, raw: ${error.raw}, code: ${error.code}, scope: ${error.scope}`).join("\n"));
+      }
+      return null;
+    }
+
+    // execute the program code
+    //const result = executeProgram(task_program_code);
+    //console.log(result);
 
     return response;
   }
 }
 
+interface ES5ValidationResult {
+  isValid: boolean;
+  errors?: Array<{
+    scope     : string,
+    raw       : string,
+    code      : string,
+    reason    : string,
+    line      : number,
+    character : number
+  }>;
+}
+
+function validateES5Compliance(code: string): ES5ValidationResult {
+  const jshint = require('jshint').JSHINT;
+  const result: ES5ValidationResult = { isValid: true };
+  
+  jshint(code, jshint_options); 
+
+  if (jshint.errors.length > 0) {
+    result.isValid = false;
+    result.errors = jshint.errors;
+  }
+
+  return result;
+}
+
 async function mainModule() {
-  const apiCaller = new RateLimitedApiCaller(14, 65); // 15 calls per 60 seconds
+  const rateLimitedCaller = new RateLimitedCaller(10, 90); // 15 calls per 60 seconds
 
   // load the HumanEval dataset
-  const dataset = loadDataset();
+  const datasetPath = "data/ES5/English.jsonl";
+  const dataset = loadDataset(datasetPath);
   // for the HumanEval dataset, create files that contain the test code
   // and save them in the data/typescript/test directory
-  // createTestFilesForHumanEval(dataset);
+  createTestFilesForHumanEval(dataset);
 
   // for each task, call the Gemini API to generate the code
   // and save the response to a file
   for (const row of dataset) {
     console.log(`Preparing to make API call ${row.task_id}...`);
-    await apiCaller.callAIApiToGenerateCode(row);
+    await rateLimitedCaller.callAIApiToGenerateCode(row);
     console.log(`API call ${row.task_id} processed.`);
   }
 }
 
-mainModule();
+// handle the command line arguments
+if (require.main === module) {
+  const functionName = process.argv[2];
+  if (functionName === 'generate') {
+    mainModule();
+  } else if (functionName === 'execute') {
+    executeAllProgramCodes();
+  } else {
+    console.error(`Invalid function name: ${functionName}`);
+    process.exit(1);
+  }
+}

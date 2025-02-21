@@ -4,9 +4,26 @@
     {
       "type": "node",
       "request": "launch",
-      "name": "Debug afl-human-eval",
+      "name": "Debug generate",
       "preLaunchTask": "npm: build",
       "program": "${workspaceFolder}/dist/afl-human-eval.js",
+      "args": [
+        "generate"
+      ],
+      "envFile": "${workspaceFolder}/.env", // Path to your .env file
+      "cwd": "${workspaceFolder}",
+      "sourceMaps": true,
+      "console": "integratedTerminal"
+    },
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "Debug execute",
+      "preLaunchTask": "npm: build",
+      "program": "${workspaceFolder}/dist/afl-human-eval.js",
+      "args": [
+        "execute"
+      ],
       "envFile": "${workspaceFolder}/.env", // Path to your .env file
       "cwd": "${workspaceFolder}",
       "sourceMaps": true,
