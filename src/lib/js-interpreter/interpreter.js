@@ -18,7 +18,8 @@
  *     global scope object.
  * @constructor
  */
-export var Interpreter = function(code, opt_initFunc) {
+
+const Interpreter = function(code, opt_initFunc) {
   if (typeof code === 'string') {
     code = this.parse_(code, 'code');
   }
@@ -4894,3 +4895,6 @@ Interpreter.prototype['getStateStack'] = Interpreter.prototype.getStateStack;
 Interpreter.prototype['setStateStack'] = Interpreter.prototype.setStateStack;
 Interpreter['Status'] = Interpreter.Status;
 Interpreter['VALUE_IN_DESCRIPTOR'] = Interpreter.VALUE_IN_DESCRIPTOR;
+
+exports.version = "1.0.0"
+exports.Interpreter = Interpreter;

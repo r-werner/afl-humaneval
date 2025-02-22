@@ -28,6 +28,7 @@
     "typescript": "^5.7.3"
   },
   "dependencies": {
+    "@babel/standalone": "^7.26.9",
     "@google/generative-ai": "^0.21.0",
     "dotenv": "^16.4.7",
     "jshint": "^2.13.6",

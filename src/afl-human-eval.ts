@@ -30,6 +30,7 @@ import dotenv from "dotenv";
 import fs, { promises } from "fs";
 import * as ts from "typescript";
 import { AssertionError } from "assert";
+import { run } from "./afl-interpreter";
 
 type TestCaseRow = {
   task_id: string;
@@ -324,9 +325,10 @@ function executeTypescriptString(typescriptCode: string): boolean {
  */
 function executeJavaScriptString(javascriptCode: string): boolean {
   try {
-    // Execute the JavaScript code
-    const result = eval(javascriptCode);
-    return true;
+    // Execute the JavaScript code using the AFL interpreter
+    const result = run(javascriptCode);
+    // console.log(result);
+    return true
   } catch (error) { 
     console.error("Error executing JavaScript string:", error);
     return false;
@@ -377,7 +379,8 @@ function executeAllProgramCodes(): void {
     fs.writeFileSync(combinedFilePath, combinedCode);
 
     // Execute the program code
-    const result = executeJavaScriptString(combinedCode);
+    //const result = executeJavaScriptString(combinedCode);
+    const result = executeJavaScriptString(code);
     // const result = executeTypescriptString(combinedCode);
     console.log("================================================ ");
     console.log(`Result for ${file}:`, result);

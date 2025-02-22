@@ -1,8 +1,12 @@
 module.exports = {
+  roots: ['<rootDir>/tests'],
+  transform: {
+    '^.+\\.(ts|tsx)$': 'ts-jest'
+  },
+  testRegex: '.*\\.test\\.(ts|tsx|js|jsx)$',
+  moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx'],
+  // Automatically clear mock calls and instances between every test
+  clearMocks: true,
+  // Use ts-jest for TypeScript files
   preset: 'ts-jest',
-  testEnvironment: 'node', // Or 'jsdom' for browser-based tests
-  moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json', 'node'],
-  testMatch: ['<rootDir>/test/**/*.test.(ts|tsx|js|jsx)'],
-  collectCoverage: true, // Enable coverage reports
-  coverageDirectory: 'coverage',
 };
