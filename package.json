@@ -30,6 +30,7 @@
   "dependencies": {
     "@babel/standalone": "^7.26.9",
     "@google/generative-ai": "^0.21.0",
+    "ast-types": "^0.14.2",
     "dotenv": "^16.4.7",
     "jshint": "^2.13.6",
     "node-fetch": "^3.3.2",

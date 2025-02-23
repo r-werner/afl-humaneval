@@ -1,7 +1,6 @@
+import { namedTypes as astTypes, builders as astBuilders } from "ast-types";
 // import { Interpreter } from './lib/js-interpreter/interpreter';
 const { Interpreter } = require("./lib/js-interpreter/interpreter");
-// console.log(Interpreter);
-
 const acorn = require("./lib/js-interpreter/acorn");
 // console.log(acorn);
 (global as any).acorn = acorn;
@@ -124,6 +123,7 @@ export interface Statement {
 export interface EnhancedInterpreterInstance extends InterpreterInstance {
   /**
    * Execute one complete statement (which may consist of multiple AST nodes)
+   * when starting at the beginning of the program, ignores the program node and the block node
    * @returns Information about the executed statement, or null if execution is complete
    */
   stepStatement(): Statement | null;
@@ -132,17 +132,12 @@ export interface EnhancedInterpreterInstance extends InterpreterInstance {
 /**
  * Determines if a node type represents a complete statement
  */
-function isStatementNode(type: string): boolean {
-  return [
-    'VariableDeclaration',
-    'ExpressionStatement',
-    'ReturnStatement',
-    'IfStatement',
-    'WhileStatement',
-    'ForStatement',
-    'FunctionDeclaration',
-    'BlockStatement'
-  ].includes(type);
+function isStatementNode(node: astTypes.Node): boolean {
+  return node.type === 'VariableDeclaration' ||
+    node.type === 'CallExpression' ||
+    node.type === 'ReturnStatement' ||
+    node.type === 'LogicalExpression' ||
+    node.type === 'AssignmentExpression';
 }
 
 /**
@@ -152,6 +147,15 @@ export function createEnhancedInterpreter(code: string): EnhancedInterpreterInst
   const interpreter = new Interpreter(code) as InterpreterInstance;
   const enhanced = interpreter as EnhancedInterpreterInstance;
 
+  /**
+   * Step through the code one statement at a time
+   * A statement is a complete unit of code that can be executed in one go and contains multiple AST nodes.
+   * A statement is what the user expects to execute in a single step (e.g. typical line of code).
+   * At the beginning of the program, the first statement is the program node and the second statement is the block node.
+   * These are not considered statements by this function.
+   * 
+   * @returns Information about the executed statement, or null if execution is complete
+   */
   enhanced.stepStatement = function(): Statement | null {
     if (this.getStatus() === Status.DONE) {
       return null;
@@ -168,7 +172,7 @@ export function createEnhancedInterpreter(code: string): EnhancedInterpreterInst
       if (!currentNode) continue;
 
       // If we haven't started a statement yet and this is a statement node, start tracking
-      if (!statementStarted && isStatementNode(currentNode.type)) {
+      if (!statementStarted && isStatementNode(currentNode)) {
         statementStarted = true;
         currentStatement = {
           type: currentNode.type,
@@ -181,7 +185,7 @@ export function createEnhancedInterpreter(code: string): EnhancedInterpreterInst
       // If we're tracking a statement and encounter a new statement node,
       // or if we've moved past the current statement's range, return the completed statement
       if (statementStarted && 
-          ((isStatementNode(currentNode.type) && currentNode.start > currentStatement!.start) ||
+          ((isStatementNode(currentNode) && currentNode.start > currentStatement!.start) ||
            currentNode.start >= currentStatement!.end)) {
         return currentStatement;
       }
@@ -220,7 +224,7 @@ export function createEnhancedInterpreterWithInit(
       const currentNode = stack[stack.length - 1].node;
       if (!currentNode) continue;
 
-      if (!statementStarted && isStatementNode(currentNode.type)) {
+      if (!statementStarted && isStatementNode(currentNode)) {
         statementStarted = true;
         currentStatement = {
           type: currentNode.type,
@@ -231,7 +235,7 @@ export function createEnhancedInterpreterWithInit(
       }
 
       if (statementStarted && 
-          ((isStatementNode(currentNode.type) && currentNode.start > currentStatement!.start) ||
+          ((isStatementNode(currentNode) && currentNode.start > currentStatement!.start) ||
            currentNode.start >= currentStatement!.end)) {
         return currentStatement;
       }
