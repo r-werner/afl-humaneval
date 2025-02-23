@@ -43,6 +43,34 @@
     {
       "type": "node",
       "request": "launch",
+      "name": "Debug afl-interpreter.test.ts (Jest)",
+      "program": "${workspaceFolder}/node_modules/jest/bin/jest",
+      "args": [
+        "--runInBand",
+        "--testPathPattern",
+        "tests/afl-interpreter.test.ts"
+      ],
+      "sourceMaps": true,
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen"
+    },
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "Debug afl-interpreter-basic.test.ts (Jest)",
+      "program": "${workspaceFolder}/node_modules/jest/bin/jest",
+      "args": [
+        "--runInBand",
+        "--testPathPattern",
+        "tests/afl-interpreter-basic.test.ts"
+      ],
+      "sourceMaps": true,
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen"
+    },
+    {
+      "type": "node",
+      "request": "launch",
       "name": "Debug aflModule.test.ts (Jest)",
       "program": "${workspaceFolder}/node_modules/jest/bin/jest",
       "args": [

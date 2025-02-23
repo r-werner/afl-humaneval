@@ -31,7 +31,8 @@ export interface InterpreterInstance {
    */
   run(): boolean;
   /**
-   * Step through the code one instruction at a time.
+   * Step through the code one AST node at a time 
+   * attention: this is not the same as a line of code; every piece of code can consist multiple AST nodes
    * @returns {boolean} True if a step was taken, false if the program is done.
    */
   step(): boolean;
@@ -105,4 +106,139 @@ export function createInterpreterWithInit(
   initFunc: (interpreter: InterpreterInstance, scope: any) => void
 ): InterpreterInstance {
   return new Interpreter(code, initFunc) as InterpreterInstance;
+}
+
+/**
+ * Represents a statement in the code with its position and type
+ */
+export interface Statement {
+  type: string;
+  start: number;
+  end: number;
+  value: any;
+}
+
+/**
+ * Enhanced interpreter instance with statement-level stepping
+ */
+export interface EnhancedInterpreterInstance extends InterpreterInstance {
+  /**
+   * Execute one complete statement (which may consist of multiple AST nodes)
+   * @returns Information about the executed statement, or null if execution is complete
+   */
+  stepStatement(): Statement | null;
+}
+
+/**
+ * Determines if a node type represents a complete statement
+ */
+function isStatementNode(type: string): boolean {
+  return [
+    'VariableDeclaration',
+    'ExpressionStatement',
+    'ReturnStatement',
+    'IfStatement',
+    'WhileStatement',
+    'ForStatement',
+    'FunctionDeclaration',
+    'BlockStatement'
+  ].includes(type);
+}
+
+/**
+ * Create an enhanced interpreter instance with statement-level stepping
+ */
+export function createEnhancedInterpreter(code: string): EnhancedInterpreterInstance {
+  const interpreter = new Interpreter(code) as InterpreterInstance;
+  const enhanced = interpreter as EnhancedInterpreterInstance;
+
+  enhanced.stepStatement = function(): Statement | null {
+    if (this.getStatus() === Status.DONE) {
+      return null;
+    }
+
+    let currentStatement: Statement | null = null;
+    let statementStarted = false;
+
+    while (this.step()) {
+      const stack = this.getStateStack();
+      if (stack.length === 0) continue;
+
+      const currentNode = stack[stack.length - 1].node;
+      if (!currentNode) continue;
+
+      // If we haven't started a statement yet and this is a statement node, start tracking
+      if (!statementStarted && isStatementNode(currentNode.type)) {
+        statementStarted = true;
+        currentStatement = {
+          type: currentNode.type,
+          start: currentNode.start,
+          end: currentNode.end,
+          value: this.value
+        };
+      }
+
+      // If we're tracking a statement and encounter a new statement node,
+      // or if we've moved past the current statement's range, return the completed statement
+      if (statementStarted && 
+          ((isStatementNode(currentNode.type) && currentNode.start > currentStatement!.start) ||
+           currentNode.start >= currentStatement!.end)) {
+        return currentStatement;
+      }
+    }
+
+    // Return the last statement if we have one
+    return currentStatement;
+  };
+
+  return enhanced;
+}
+
+/**
+ * Create a new interpreter with initialization function and statement-level stepping
+ */
+export function createEnhancedInterpreterWithInit(
+  code: string,
+  initFunc: (interpreter: InterpreterInstance, scope: any) => void
+): EnhancedInterpreterInstance {
+  const interpreter = new Interpreter(code, initFunc) as InterpreterInstance;
+  const enhanced = interpreter as EnhancedInterpreterInstance;
+
+  enhanced.stepStatement = function(): Statement | null {
+    // Same implementation as above
+    if (this.getStatus() === Status.DONE) {
+      return null;
+    }
+
+    let currentStatement: Statement | null = null;
+    let statementStarted = false;
+
+    while (this.step()) {
+      const stack = this.getStateStack();
+      if (stack.length === 0) continue;
+
+      const currentNode = stack[stack.length - 1].node;
+      if (!currentNode) continue;
+
+      if (!statementStarted && isStatementNode(currentNode.type)) {
+        statementStarted = true;
+        currentStatement = {
+          type: currentNode.type,
+          start: currentNode.start,
+          end: currentNode.end,
+          value: this.value
+        };
+      }
+
+      if (statementStarted && 
+          ((isStatementNode(currentNode.type) && currentNode.start > currentStatement!.start) ||
+           currentNode.start >= currentStatement!.end)) {
+        return currentStatement;
+      }
+    }
+
+    return currentStatement;
+  };
+
+  return enhanced;
 }
