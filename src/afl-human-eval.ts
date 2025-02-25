@@ -27,10 +27,11 @@
 */
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import dotenv from "dotenv";
-import fs, { promises } from "fs";
+import fs from "fs";
 import * as ts from "typescript";
+import { transpileToES5 } from "./transpiler";
 import { AssertionError } from "assert";
-import { run } from "./afl-interpreter";
+import { createInterpreter } from "./afl-interpreter";
 
 type TestCaseRow = {
   task_id: string;
@@ -326,8 +327,8 @@ function executeTypescriptString(typescriptCode: string): boolean {
 function executeJavaScriptString(javascriptCode: string): boolean {
   try {
     // Execute the JavaScript code using the AFL interpreter
-    const result = run(javascriptCode);
-    // console.log(result);
+    const interpreter = createInterpreter(javascriptCode);
+    const result = interpreter.run();
     return true
   } catch (error) { 
     console.error("Error executing JavaScript string:", error);
@@ -337,6 +338,8 @@ function executeJavaScriptString(javascriptCode: string): boolean {
 
 /**
  * Executes all the program code files in the "temp" directory and logs results.
+ * at the end of the execution, it prints the number of program codes that were executed  
+ * and the number of program codes that failed.
  */
 function executeAllProgramCodes(): void {
   console.log("Executing all program codes...");
@@ -352,7 +355,15 @@ function executeAllProgramCodes(): void {
   // Filter for program code files
   const codeFiles = files.filter((file) => file.endsWith("_code.js"));
 
+  // Create arrays to track successes and failures
+  const failedCodes: string[] = [];
+  const successfulCodes: string[] = [];
+  
   codeFiles.forEach((file) => {
+    console.log("************************************************");
+    console.log(`Starting file ${file}:`);
+    console.log("************************************************");
+
     const codePath = `temp/${file}`;
     const code = fs.readFileSync(codePath, "utf8");
 
@@ -368,9 +379,10 @@ function executeAllProgramCodes(): void {
     }
 
     const testCode = fs.readFileSync(testPath, "utf8");
-
+    // transpile the test code to ES5
+    const transpiledTestCode = transpileToES5(testCode);
     // prepend the test code to the program code
-    const combinedCode = `${code}\n\n${testCode}`;
+    const combinedCode = `${code}\n\n${transpiledTestCode}`;
     // console.log(combinedCode);
 
     // write the combined code to a file with the name of the program code file
@@ -379,16 +391,38 @@ function executeAllProgramCodes(): void {
     fs.writeFileSync(combinedFilePath, combinedCode);
 
     // Execute the program code
-    //const result = executeJavaScriptString(combinedCode);
-    const result = executeJavaScriptString(code);
-    // const result = executeTypescriptString(combinedCode);
+    const result = executeJavaScriptString(combinedCode);
+    
+    // Track result
+    if (result) {
+      successfulCodes.push(file);
+    } else {
+      failedCodes.push(file);
+    }
+    
     console.log("================================================ ");
     console.log(`Result for ${file}:`, result);
     console.log("================================================");
-
-    // Optionally, you could evaluate the result against the testCode here.
-    // For example, you might run the testCode or perform assertions.
   });
+  
+  // Print final statistics
+  console.log("\n=== EXECUTION SUMMARY ===");
+  console.log(`Total test cases: ${codeFiles.length}`);
+  console.log(`Successful test cases: ${successfulCodes.length}`);
+  console.log(`Failed test cases: ${failedCodes.length}`);
+  
+  // Extract and print the numbers of failed test cases
+  const failedNumbers = failedCodes.map(file => {
+    const match = file.match(/task_typescript_(\d+)_code/);
+    return match ? match[1] : null;
+  }).filter(num => num !== null);
+  
+  if (failedNumbers.length > 0) {
+    console.log(`Failed test case numbers: ${failedNumbers.join(', ')}`);
+  }
+  
+  console.log(`Success rate: ${((successfulCodes.length / codeFiles.length) * 100).toFixed(2)}%`);
+  console.log("=========================\n");
 }
 
 /**

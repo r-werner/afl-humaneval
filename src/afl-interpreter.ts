@@ -5,84 +5,129 @@ const acorn = require("./lib/js-interpreter/acorn");
 // console.log(acorn);
 (global as any).acorn = acorn;
 
-// Type definitions for the Interpreter
-export interface InterpreterState {
-  node: any;
-  scope: any;
-  done: boolean;
-}
+import requireWrapper from "./require_wrapper";
 
-export interface InterpreterScope {
-  object: any;
-  parent: InterpreterScope | null;
-}
+const interpreterImplementationAssertions = `
+function deepEqual(actual, expected, message) {
+  // 1. Basic Equality Check (===)
+  if (actual === expected) {
+    return true; // Handles primitives and identical object references
+  }
 
-export interface InterpreterInstance {
-  value: any;
-  ast: any;
-  stateStack: InterpreterState[];
-  globalScope: InterpreterScope;
-  globalObject: any;
-  /**
-   * Execute the interpreter to program completion.  Vulnerable to infinite loops.
-   * @returns {boolean} True if a execution is asynchronously blocked,
-   *     false if no more instructions.
-   */
-  run(): boolean;
-  /**
-   * Step through the code one AST node at a time 
-   * attention: this is not the same as a line of code; every piece of code can consist multiple AST nodes
-   * @returns {boolean} True if a step was taken, false if the program is done.
-   */
-  step(): boolean;
-  appendCode(code: string): void;
-  createNativeFunction(nativeFunc: Function, isConstructor: boolean): any;
-  createAsyncFunction(asyncFunc: Function): any;
-  getProperty(obj: any, name: string): any;
-  setProperty(
-    obj: any,
-    name: string,
-    value: any,
-    descriptor?: PropertyDescriptor
-  ): boolean;
-  getStatus(): number;
-  nativeToPseudo(nativeObj: any): any;
-  pseudoToNative(pseudoObj: any): any;
-  getGlobalScope(): InterpreterScope;
-  setGlobalScope(scope: InterpreterScope): void;
-  getStateStack(): InterpreterState[];
-  setStateStack(stack: InterpreterState[]): void;
-}
+  // 2. Type and Null/Undefined Checks
+  if (typeof actual !== typeof expected || actual === null || expected === null) {
+      throw new Error(message || \`Expected \${expected} but got \${actual}\`);
+  }
+  
+   // 3.  Handle Dates
+  if (actual instanceof Date && expected instanceof Date) {
+      return actual.getTime() === expected.getTime();
+  }
 
-export interface InterpreterResult {
-  success: boolean;
-  value: any;
-  interpreter: InterpreterInstance;
-}
+  // 4. Handle Regular Expressions
+  if (Object.prototype.toString.call(actual) === '[object RegExp]' &&
+      Object.prototype.toString.call(expected) === '[object RegExp]') {
+      return actual.source === expected.source && actual.flags === expected.flags;
+  }
 
-/**
- * Run JavaScript code in the interpreter and return the result
- * @param code JavaScript code to execute
- * @returns Object containing success status, final value, and interpreter instance
- */
-export function run(code: string): InterpreterResult {
-  const interpreter = new Interpreter(code) as InterpreterInstance;
-  const success = interpreter.run();
-  return {
-    success,
-    value: interpreter.value,
-    interpreter,
-  };
-}
+  // 5. Array Check
+  if (Array.isArray(actual) && Array.isArray(expected)) {
+    if (actual.length !== expected.length) {
+      throw new Error(message || \`Arrays have different lengths: \${actual.length} vs \${expected.length}\`);
+    }
+    for (let i = 0; i < actual.length; i++) {
+      if (!deepEqual(actual[i], expected[i], message)) {
+        return false; // Recursively check elements
+      }
+    }
+    return true;
+  }
 
-/**
- * Create a new interpreter instance without running it
- * @param code JavaScript code to interpret
- * @returns Interpreter instance
- */
-export function createInterpreter(code: string): InterpreterInstance {
-  return new Interpreter(code) as InterpreterInstance;
+  // 6. Object Check
+  if (typeof actual === 'object' && typeof expected === 'object') {
+    const actualKeys = Object.keys(actual);
+    const expectedKeys = Object.keys(expected);
+
+    if (actualKeys.length !== expectedKeys.length) {
+       throw new Error(message || \`Objects have different number of keys\`);
+    }
+
+    for (const key of actualKeys) {
+      if (!expectedKeys.includes(key)) {
+        throw new Error(message || \`Key "\${key}" is missing in expected object\`);
+
+      }
+      if (!deepEqual(actual[key], expected[key], message)) {
+        return false; // Recursively check values
+      }
+    }
+    return true;
+  }
+  // 7. if it is not any of the above, they are not equal.
+   throw new Error(message || \`Expected \${expected} but got \${actual}\`);
 }
+`;
+
+const interpreterImplementationAssertionsWrapper = `
+function require(moduleName) {
+    function deepEqual(actual, expected, message) {
+        // 1. Basic Equality Check (===)
+        if (actual === expected) {
+            return true; // Handles primitives and identical object references
+        }
+        // 2. Type and Null/Undefined Checks
+        if (typeof actual !== typeof expected || actual === null || expected === null) {
+            throw new Error(message || \`Expected \${expected} but got \${actual}\`);
+        }
+        // 3.  Handle Dates
+        if (actual instanceof Date && expected instanceof Date) {
+            return actual.getTime() === expected.getTime();
+        }
+        // 4. Handle Regular Expressions
+        if (Object.prototype.toString.call(actual) === '[object RegExp]' &&
+            Object.prototype.toString.call(expected) === '[object RegExp]') {
+            return actual.source === expected.source &&
+                actual.flags === expected.flags;
+        }
+        // 5. Array Check
+        if (Array.isArray(actual) && Array.isArray(expected)) {
+            if (actual.length !== expected.length) {
+                throw new Error(message || \`Arrays have different lengths: \${actual.length} vs \${expected.length}\`);
+            }
+            for (let i = 0; i < actual.length; i++) {
+                if (!deepEqual(actual[i], expected[i], message)) {
+                    return false; // Recursively check elements
+                }
+            }
+            return true;
+        }
+        // 6. Object Check
+        if (typeof actual === 'object' && typeof expected === 'object') {
+            const actualKeys = Object.keys(actual);
+            const expectedKeys = Object.keys(expected);
+            if (actualKeys.length !== expectedKeys.length) {
+                throw new Error(message || \`Objects have different number of keys\`);
+            }
+            for (const key of actualKeys) {
+                if (!expectedKeys.includes(key)) {
+                    throw new Error(message || \`Key "\${key}" is missing in expected object\`);
+                }
+                if (!deepEqual(actual[key], expected[key], message)) {
+                    return false; // Recursively check values
+                }
+            }
+            return true;
+        }
+        // 7. if it is not any of the above, they are not equal.
+        throw new Error(message || \`Expected \${expected} but got \${actual}\`);
+    }
+    // In a real 'require' function, you would typically load a module
+    // based on the moduleName.
+    // For this example, we are just returning an object with the deepEqual function.
+    return {
+        deepEqual: deepEqual
+    };
+}`;
 
 /**
  * Status constants from the Interpreter
@@ -94,155 +139,162 @@ export const Status = {
   ASYNC: 3,
 } as const;
 
+export type Status = typeof Status[keyof typeof Status];
+
+export interface Statement {
+  type: string;
+  start: number;
+  end: number;
+  value?: any;
+}
+
 /**
- * Create a new interpreter with initialization function
+ * A wrapper around the js-interpreter that provides a type-safe interface
+ */
+export class InterpreterWrapper implements InterpreterInstance {
+  private interpreter: any;
+  private ast: astTypes.Program;
+
+  constructor(code: string) {
+    // before we call the constructor, we need a few more initializations
+    // using the Optional initialization function
+    // 1. add the "require" function so that we can use it in the code and the interpreter will simply ignore it
+    
+    var initFunc = function(interpreter: any, globalObject: any) {
+      // Create 'robot' global object.
+      var requireWrapper1 = interpreter.nativeToPseudo(requireWrapper);
+      interpreter.setProperty(globalObject, 'require', requireWrapper1);
+    }
+    this.interpreter = new Interpreter(code, initFunc);
+    this.ast = acorn.parse(code, { ecmaVersion: 5 });
+  }
+
+  getValue(): any {
+    return this.interpreter.value;
+  }
+
+  getAst(): astTypes.Program {
+    return this.interpreter.ast;
+  }
+
+  run(): boolean {
+    return this.interpreter.run();
+  }
+
+  step(): boolean {
+    return this.interpreter.step();
+  }
+
+  getStatus(): Status {
+    return this.interpreter.getStatus();
+  }
+
+  /**
+   * Get the current node being executed
+   */
+  getCurrentStatement(): any {
+    return this.interpreter.stateStack[this.interpreter.stateStack.length - 1]?.node;
+  }
+
+  /**
+   * Step through the code one statement at a time
+   * @returns {Statement | null} The statement that was executed, or null if done
+   */
+  stepStatement(): Statement | null {
+    if (this.getStatus() === Status.DONE) {
+      return null;
+    }
+
+    const startNode = this.getCurrentStatement();
+    if (!startNode) {
+      return null;
+    }
+
+    // Step until we reach a new statement or finish execution
+    while (this.step()) {
+      const currentNode = this.getCurrentStatement();
+      
+      // If we've moved to a new statement or finished execution
+      if (!currentNode || this.isNewStatement(startNode, currentNode)) {
+        return {
+          type: startNode.type,
+          start: startNode.start,
+          end: startNode.end,
+          value: this.getValue()
+        };
+      }
+    }
+
+    // Handle the last statement
+    if (startNode) {
+      return {
+        type: startNode.type,
+        start: startNode.start,
+        end: startNode.end,
+        value: this.getValue()
+      };
+    }
+
+    return null;
+  }
+
+  getGlobalScope(): any {
+    return this.interpreter.globalScope;
+  }
+
+  private isNewStatement(prevNode: any, currentNode: any): boolean {
+    // These node types are considered complete statements
+    const statementTypes = new Set([
+      'VariableDeclaration',
+      'ExpressionStatement',
+      'ReturnStatement',
+      'IfStatement',
+      'WhileStatement',
+      'ForStatement',
+      'FunctionDeclaration',
+      'BlockStatement',
+      'TryStatement',
+      'ThrowStatement',
+      'BreakStatement',
+      'ContinueStatement'
+    ]);
+
+    // If we've moved to a new statement type
+    return statementTypes.has(currentNode.type) && prevNode !== currentNode;
+  }
+}
+
+export interface InterpreterInstance {
+  getValue(): any;
+  getAst(): astTypes.Program;
+  getCurrentStatement(): astTypes.Node;
+  run(): boolean;
+  step(): boolean;
+  getStatus(): Status;
+  stepStatement(): Statement | null;
+  getGlobalScope(): any;
+}
+
+/**
+ * Create a new interpreter instance without running it
+ * @param code JavaScript code to interpret
+ * @returns Interpreter instance
+ */
+export function createInterpreter(code: string): InterpreterInstance {
+  return new InterpreterWrapper(code);
+}
+
+/**
+ * Create a new interpreter instance with initialization function
  * @param code JavaScript code to interpret
  * @param initFunc Function to initialize the interpreter's global scope
  * @returns Interpreter instance
  */
 export function createInterpreterWithInit(
   code: string,
-  initFunc: (interpreter: InterpreterInstance, scope: any) => void
+  initFunc: (interpreter: any, globalObject: any) => void
 ): InterpreterInstance {
-  return new Interpreter(code, initFunc) as InterpreterInstance;
+  return new InterpreterWrapper(code);
 }
 
-/**
- * Represents a statement in the code with its position and type
- */
-export interface Statement {
-  type: string;
-  start: number;
-  end: number;
-  value: any;
-}
 
-/**
- * Enhanced interpreter instance with statement-level stepping
- */
-export interface EnhancedInterpreterInstance extends InterpreterInstance {
-  /**
-   * Execute one complete statement (which may consist of multiple AST nodes)
-   * when starting at the beginning of the program, ignores the program node and the block node
-   * @returns Information about the executed statement, or null if execution is complete
-   */
-  stepStatement(): Statement | null;
-}
-
-/**
- * Determines if a node type represents a complete statement
- */
-function isStatementNode(node: astTypes.Node): boolean {
-  return node.type === 'VariableDeclaration' ||
-    node.type === 'CallExpression' ||
-    node.type === 'ReturnStatement' ||
-    node.type === 'LogicalExpression' ||
-    node.type === 'AssignmentExpression';
-}
-
-/**
- * Create an enhanced interpreter instance with statement-level stepping
- */
-export function createEnhancedInterpreter(code: string): EnhancedInterpreterInstance {
-  const interpreter = new Interpreter(code) as InterpreterInstance;
-  const enhanced = interpreter as EnhancedInterpreterInstance;
-
-  /**
-   * Step through the code one statement at a time
-   * A statement is a complete unit of code that can be executed in one go and contains multiple AST nodes.
-   * A statement is what the user expects to execute in a single step (e.g. typical line of code).
-   * At the beginning of the program, the first statement is the program node and the second statement is the block node.
-   * These are not considered statements by this function.
-   * 
-   * @returns Information about the executed statement, or null if execution is complete
-   */
-  enhanced.stepStatement = function(): Statement | null {
-    if (this.getStatus() === Status.DONE) {
-      return null;
-    }
-
-    let currentStatement: Statement | null = null;
-    let statementStarted = false;
-
-    while (this.step()) {
-      const stack = this.getStateStack();
-      if (stack.length === 0) continue;
-
-      const currentNode = stack[stack.length - 1].node;
-      if (!currentNode) continue;
-
-      // If we haven't started a statement yet and this is a statement node, start tracking
-      if (!statementStarted && isStatementNode(currentNode)) {
-        statementStarted = true;
-        currentStatement = {
-          type: currentNode.type,
-          start: currentNode.start,
-          end: currentNode.end,
-          value: this.value
-        };
-      }
-
-      // If we're tracking a statement and encounter a new statement node,
-      // or if we've moved past the current statement's range, return the completed statement
-      if (statementStarted && 
-          ((isStatementNode(currentNode) && currentNode.start > currentStatement!.start) ||
-           currentNode.start >= currentStatement!.end)) {
-        return currentStatement;
-      }
-    }
-
-    // Return the last statement if we have one
-    return currentStatement;
-  };
-
-  return enhanced;
-}
-
-/**
- * Create a new interpreter with initialization function and statement-level stepping
- */
-export function createEnhancedInterpreterWithInit(
-  code: string,
-  initFunc: (interpreter: InterpreterInstance, scope: any) => void
-): EnhancedInterpreterInstance {
-  const interpreter = new Interpreter(code, initFunc) as InterpreterInstance;
-  const enhanced = interpreter as EnhancedInterpreterInstance;
-
-  enhanced.stepStatement = function(): Statement | null {
-    // Same implementation as above
-    if (this.getStatus() === Status.DONE) {
-      return null;
-    }
-
-    let currentStatement: Statement | null = null;
-    let statementStarted = false;
-
-    while (this.step()) {
-      const stack = this.getStateStack();
-      if (stack.length === 0) continue;
-
-      const currentNode = stack[stack.length - 1].node;
-      if (!currentNode) continue;
-
-      if (!statementStarted && isStatementNode(currentNode)) {
-        statementStarted = true;
-        currentStatement = {
-          type: currentNode.type,
-          start: currentNode.start,
-          end: currentNode.end,
-          value: this.value
-        };
-      }
-
-      if (statementStarted && 
-          ((isStatementNode(currentNode) && currentNode.start > currentStatement!.start) ||
-           currentNode.start >= currentStatement!.end)) {
-        return currentStatement;
-      }
-    }
-
-    return currentStatement;
-  };
-
-  return enhanced;
-}

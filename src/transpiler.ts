@@ -16,8 +16,8 @@ export function transpileToES5(code: string): string {
       throw new Error('Transpilation failed: no output produced');
     }
     
-    console.log("Original ES6 Code:\n", code);
-    console.log("\nTranspiled ES5 Code:\n", result.code);
+    // console.log("Original ES6 Code:\n", code);
+    // console.log("\nTranspiled ES5 Code:\n", result.code);
 
     return result.code;
   } catch (error: any) {

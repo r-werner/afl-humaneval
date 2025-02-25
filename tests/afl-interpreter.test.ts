@@ -1,10 +1,7 @@
 import {
-  run,
   createInterpreter,
-  createInterpreterWithInit,
   Status,
   InterpreterInstance,
-  createEnhancedInterpreter,
   Statement,
 } from "../src/afl-interpreter";
 import { namedTypes as astTypes, builders as astBuilders } from "ast-types";
@@ -21,8 +18,8 @@ describe("afl-interpreter", () => {
         x;
       `;
 
-      const interpreter = createEnhancedInterpreter(code);
-      const ast = interpreter.ast;
+      const interpreter = createInterpreter(code);
+      const ast = interpreter.getAst();
       console.log(ast);
 
       const statements: Array<{ type: string; value: any }> = [];
@@ -31,7 +28,7 @@ describe("afl-interpreter", () => {
       while ((statement = interpreter.stepStatement()) !== null) {
         statements.push({
           type: statement.type,
-          value: interpreter.value,
+          value: interpreter.getValue(),
         });
       }
 
@@ -43,7 +40,7 @@ describe("afl-interpreter", () => {
         { type: "ExpressionStatement", value: 4 },
       ]);
 
-      expect(interpreter.value).toBe(4);
+      expect(interpreter.getValue()).toBe(4);
     });
 
     it("handles function declarations and calls", () => {
@@ -55,14 +52,14 @@ describe("afl-interpreter", () => {
         result;
       `;
 
-      const interpreter = createEnhancedInterpreter(code);
+      const interpreter = createInterpreter(code);
       const statements: Array<{ type: string; value: any }> = [];
 
       let statement: Statement | null;
       while ((statement = interpreter.stepStatement()) !== null) {
         statements.push({
           type: statement.type,
-          value: interpreter.value,
+          value: interpreter.getValue(),
         });
       }
 
@@ -72,7 +69,7 @@ describe("afl-interpreter", () => {
         { type: "ExpressionStatement", value: 6 },
       ]);
 
-      expect(interpreter.value).toBe(6);
+      expect(interpreter.getValue()).toBe(6);
     });
 
     it("provides statement position information", () => {
